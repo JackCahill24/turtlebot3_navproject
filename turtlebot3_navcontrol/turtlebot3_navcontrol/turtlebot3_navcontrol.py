@@ -8,9 +8,9 @@ from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
 
 
-class TurtleBot3WaiterController(Node):
+class TurtleBot3BasicController(Node):
     def __init__(self, goal_x, goal_y):
-        super().__init__('turtlebot3_waiter_controller')
+        super().__init__('turtlebot3_basic_controller')
         
         # Goal coordinates
         self.goal_x = goal_x
@@ -20,9 +20,8 @@ class TurtleBot3WaiterController(Node):
         self.current_x = 0.0
         self.current_y = 0.0
         self.yaw = 0.0
-        self.obstacle_detected = False
         self.closest_obstacle_distance = float('inf')
-        self.closest_obstacle_angle = 0.0
+        self.obstacle_detected = False
         
         # Controller gains
         self.kp_linear = 0.4  # Proportional gain for linear velocity
@@ -30,8 +29,7 @@ class TurtleBot3WaiterController(Node):
         
         # Thresholds and tolerances
         self.goal_tolerance = 0.1  # Tolerance for goal distance
-        self.obstacle_distance_threshold = 0.6  # Threshold for obstacle detection (meters)
-        self.emergency_stop_distance = 0.2  # Stop if obstacle is too close
+        self.safe_distance = 0.15  # Minimum safe distance from obstacles (meters)
         
         # Publisher and subscribers
         self.velocity_publisher = self.create_publisher(Twist, '/cmd_vel', 10)
@@ -40,7 +38,7 @@ class TurtleBot3WaiterController(Node):
         
         # Control loop timer
         self.control_timer = self.create_timer(0.1, self.control_loop)
-        self.get_logger().info(f"Waiter controller started. Goal: x={goal_x}, y={goal_y}")
+        self.get_logger().info(f"Controller started. Goal: x={goal_x}, y={goal_y}")
 
     def odom_callback(self, msg):
         """Updates the robot's current position and yaw based on odometry."""
@@ -55,8 +53,7 @@ class TurtleBot3WaiterController(Node):
     def scan_callback(self, msg):
         """Detects obstacles using LiDAR data."""
         self.closest_obstacle_distance = min(msg.ranges)
-        self.closest_obstacle_angle = msg.ranges.index(self.closest_obstacle_distance)  # Angle index
-        self.obstacle_detected = self.closest_obstacle_distance < self.obstacle_distance_threshold
+        self.obstacle_detected = self.closest_obstacle_distance < self.safe_distance
 
     def control_loop(self):
         """Main control loop for navigating to the goal while avoiding obstacles."""
@@ -67,10 +64,8 @@ class TurtleBot3WaiterController(Node):
             self.get_logger().info("Goal reached!")
             return
 
-        if self.closest_obstacle_distance < self.emergency_stop_distance:
-            self.emergency_stop()
-        elif self.obstacle_detected:
-            self.navigate_around_obstacle()
+        if self.obstacle_detected:
+            self.avoid_obstacle()
         else:
             self.navigate_to_goal(distance_to_goal)
 
@@ -97,30 +92,15 @@ class TurtleBot3WaiterController(Node):
             f"Navigating: Distance={distance_to_goal:.2f}, Angle Error={angle_error:.2f}, Linear={msg.linear.x:.2f}, Angular={msg.angular.z:.2f}"
         )
 
-    def navigate_around_obstacle(self):
+    def avoid_obstacle(self):
         """Controller for avoiding obstacles."""
+        # Stop forward motion and rotate slightly to adjust path
         msg = Twist()
-        
-        if self.closest_obstacle_angle < 180:
-            # Obstacle on the left, turn slightly right
-            msg.angular.z = -0.3
-        else:
-            # Obstacle on the right, turn slightly left
-            msg.angular.z = 0.3
-        
-        # Reduce speed when avoiding
-        msg.linear.x = 0.1
+        msg.linear.x = 0.0
+        msg.angular.z = 0.3  # Rotate to avoid the obstacle
         self.velocity_publisher.publish(msg)
 
         self.get_logger().info("Avoiding obstacle. Adjusting path.")
-
-    def emergency_stop(self):
-        """Stops the robot immediately when an obstacle is too close."""
-        msg = Twist()
-        msg.linear.x = 0.0
-        msg.angular.z = 0.0
-        self.velocity_publisher.publish(msg)
-        self.get_logger().warn("Emergency stop! Obstacle too close.")
 
     def stop_robot(self):
         """Stops the robot gracefully."""
@@ -139,7 +119,7 @@ def main(args=None):
     goal_y = float(input("  Goal Y (meters): "))
 
     # Start the controller node
-    node = TurtleBot3WaiterController(goal_x, goal_y)
+    node = TurtleBot3BasicController(goal_x, goal_y)
     rclpy.spin(node)
 
     node.destroy_node()
