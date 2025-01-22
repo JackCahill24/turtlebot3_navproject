@@ -8,9 +8,9 @@ from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
 
 
-class TurtleBot3Controller(Node):
+class TurtleBot3WaiterController(Node):
     def __init__(self, goal_x, goal_y):
-        super().__init__('turtlebot3_controller')
+        super().__init__('turtlebot3_waiter_controller')
         
         # Goal coordinates
         self.goal_x = goal_x
@@ -21,15 +21,17 @@ class TurtleBot3Controller(Node):
         self.current_y = 0.0
         self.yaw = 0.0
         self.obstacle_detected = False
-        self.obstacle_avoidance_active = False
+        self.closest_obstacle_distance = float('inf')
+        self.closest_obstacle_angle = 0.0
         
         # Controller gains
-        self.kp_linear = 0.5  # Proportional gain for linear velocity
-        self.kp_angular = 1.0  # Proportional gain for angular velocity
+        self.kp_linear = 0.4  # Proportional gain for linear velocity
+        self.kp_angular = 1.2  # Proportional gain for angular velocity
         
-        # Tolerance
+        # Thresholds and tolerances
         self.goal_tolerance = 0.1  # Tolerance for goal distance
-        self.obstacle_distance_threshold = 0.5  # Threshold for obstacle detection (meters)
+        self.obstacle_distance_threshold = 0.6  # Threshold for obstacle detection (meters)
+        self.emergency_stop_distance = 0.2  # Stop if obstacle is too close
         
         # Publisher and subscribers
         self.velocity_publisher = self.create_publisher(Twist, '/cmd_vel', 10)
@@ -38,7 +40,7 @@ class TurtleBot3Controller(Node):
         
         # Control loop timer
         self.control_timer = self.create_timer(0.1, self.control_loop)
-        self.get_logger().info(f"Controller started. Goal: x={goal_x}, y={goal_y}")
+        self.get_logger().info(f"Waiter controller started. Goal: x={goal_x}, y={goal_y}")
 
     def odom_callback(self, msg):
         """Updates the robot's current position and yaw based on odometry."""
@@ -52,8 +54,9 @@ class TurtleBot3Controller(Node):
 
     def scan_callback(self, msg):
         """Detects obstacles using LiDAR data."""
-        min_distance = min(msg.ranges)
-        self.obstacle_detected = min_distance < self.obstacle_distance_threshold
+        self.closest_obstacle_distance = min(msg.ranges)
+        self.closest_obstacle_angle = msg.ranges.index(self.closest_obstacle_distance)  # Angle index
+        self.obstacle_detected = self.closest_obstacle_distance < self.obstacle_distance_threshold
 
     def control_loop(self):
         """Main control loop for navigating to the goal while avoiding obstacles."""
@@ -64,8 +67,10 @@ class TurtleBot3Controller(Node):
             self.get_logger().info("Goal reached!")
             return
 
-        if self.obstacle_detected:
-            self.avoid_obstacle()
+        if self.closest_obstacle_distance < self.emergency_stop_distance:
+            self.emergency_stop()
+        elif self.obstacle_detected:
+            self.navigate_around_obstacle()
         else:
             self.navigate_to_goal(distance_to_goal)
 
@@ -75,16 +80,16 @@ class TurtleBot3Controller(Node):
         angle_error = angle_to_goal - self.yaw
         angle_error = math.atan2(math.sin(angle_error), math.cos(angle_error))  # Normalize to [-pi, pi]
 
-        # Linear velocity control (proportional)
+        # Linear velocity control
         linear_velocity = self.kp_linear * distance_to_goal
-        linear_velocity = min(linear_velocity, 0.2)  # Cap max speed to 0.2 m/s
+        linear_velocity = min(linear_velocity, 0.3)  # Cap max speed to 0.3 m/s
         
-        # Angular velocity control (proportional)
+        # Angular velocity control
         angular_velocity = self.kp_angular * angle_error
 
         # Publish velocity commands
         msg = Twist()
-        msg.linear.x = linear_velocity if abs(angle_error) < 0.5 else 0.0  # Stop linear motion if angle error is large
+        msg.linear.x = linear_velocity if abs(angle_error) < 0.5 else 0.0  # Slow down when turning
         msg.angular.z = angular_velocity
         self.velocity_publisher.publish(msg)
 
@@ -92,18 +97,33 @@ class TurtleBot3Controller(Node):
             f"Navigating: Distance={distance_to_goal:.2f}, Angle Error={angle_error:.2f}, Linear={msg.linear.x:.2f}, Angular={msg.angular.z:.2f}"
         )
 
-    def avoid_obstacle(self):
-        """Controller for obstacle avoidance."""
-        # Rotate in place to avoid obstacle
+    def navigate_around_obstacle(self):
+        """Controller for avoiding obstacles."""
         msg = Twist()
-        msg.linear.x = 0.0
-        msg.angular.z = 0.3  # Fixed angular velocity
+        
+        if self.closest_obstacle_angle < 180:
+            # Obstacle on the left, turn slightly right
+            msg.angular.z = -0.3
+        else:
+            # Obstacle on the right, turn slightly left
+            msg.angular.z = 0.3
+        
+        # Reduce speed when avoiding
+        msg.linear.x = 0.1
         self.velocity_publisher.publish(msg)
 
-        self.get_logger().info("Obstacle detected! Avoiding obstacle.")
+        self.get_logger().info("Avoiding obstacle. Adjusting path.")
+
+    def emergency_stop(self):
+        """Stops the robot immediately when an obstacle is too close."""
+        msg = Twist()
+        msg.linear.x = 0.0
+        msg.angular.z = 0.0
+        self.velocity_publisher.publish(msg)
+        self.get_logger().warn("Emergency stop! Obstacle too close.")
 
     def stop_robot(self):
-        """Stops the robot."""
+        """Stops the robot gracefully."""
         msg = Twist()
         msg.linear.x = 0.0
         msg.angular.z = 0.0
@@ -119,7 +139,7 @@ def main(args=None):
     goal_y = float(input("  Goal Y (meters): "))
 
     # Start the controller node
-    node = TurtleBot3Controller(goal_x, goal_y)
+    node = TurtleBot3WaiterController(goal_x, goal_y)
     rclpy.spin(node)
 
     node.destroy_node()
