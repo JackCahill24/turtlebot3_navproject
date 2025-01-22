@@ -3,6 +3,7 @@
 import math
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
@@ -29,12 +30,17 @@ class TurtleBot3NavControl(Node):
         # ROS 2 publishers and subscribers
         self.velocity_publisher = self.create_publisher(Twist, '/cmd_vel', 10)
         self.create_subscription(Odometry, '/odom', self.odom_callback, 10)
-        self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
+        self.create_subscription(
+            LaserScan,
+            '/scan',
+            self.scan_callback,
+            qos_profile=QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT)
+        )
 
         # Control loop timer
         self.control_timer = self.create_timer(0.1, self.control_loop)
 
-        self.get_logger().info(f"Navigator started. Goal: x={goal_x}, y={goal_y}")
+        self.get_logger().info(f"Navigator started. Goal: x={goal_x:.2f}, y={goal_y:.2f}")
 
     def odom_callback(self, msg):
         """Updates the robot's position and orientation."""
@@ -65,7 +71,7 @@ class TurtleBot3NavControl(Node):
             self.move_toward_goal()
 
     def move_toward_goal(self):
-        """Moves the robot in a straight line toward the goal."""
+        """Drives the robot in a straight line toward the goal."""
         angle_to_goal = math.atan2(self.goal_y - self.current_y, self.goal_x - self.current_x)
         angle_error = angle_to_goal - self.yaw
         angle_error = math.atan2(math.sin(angle_error), math.cos(angle_error))  # Normalize to [-pi, pi]
