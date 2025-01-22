@@ -29,8 +29,8 @@ class TurtleBot3NavControl(Node):
         self.goal_tolerance = 0.1  # Tolerance for goal distance (meters)
 
         # Controller gains (digital control perspective)
-        self.kp_linear = 0.5  # Proportional gain for linear velocity
-        self.kp_angular = 1.5  # Proportional gain for angular velocity
+        self.kp_linear = 0.4  # Proportional gain for linear velocity
+        self.kp_angular = 1.2  # Proportional gain for angular velocity
 
         # ROS 2 publishers and subscribers
         self.velocity_publisher = self.create_publisher(Twist, '/cmd_vel', 10)
@@ -70,33 +70,30 @@ class TurtleBot3NavControl(Node):
         if self.obstacle_detected:
             self.avoid_obstacle()
         else:
-            self.navigate_to_goal(distance_to_goal)
+            self.move_toward_goal(distance_to_goal)
 
-    def navigate_to_goal(self, distance_to_goal):
-        """Controls the robot to follow the straight path to the goal."""
+    def move_toward_goal(self, distance_to_goal):
+        """Drives the robot in a straight line toward the goal."""
         angle_to_goal = math.atan2(self.goal_y - self.current_y, self.goal_x - self.current_x)
         angle_error = angle_to_goal - self.yaw
         angle_error = math.atan2(math.sin(angle_error), math.cos(angle_error))  # Normalize to [-pi, pi]
 
-        # Linear velocity control (proportional)
+        # Linear velocity control (prioritizing straight motion)
         linear_velocity = self.kp_linear * distance_to_goal
         linear_velocity = min(linear_velocity, 0.3)  # Cap max speed to 0.3 m/s
 
-        # Angular velocity control (proportional)
-        angular_velocity = self.kp_angular * angle_error
-
         msg = Twist()
-        msg.linear.x = linear_velocity if abs(angle_error) < 0.3 else 0.0  # Stop forward motion for large angle errors
-        msg.angular.z = angular_velocity
+        msg.linear.x = linear_velocity
+        msg.angular.z = 0.0  # No turning unless avoiding obstacles
 
         self.velocity_publisher.publish(msg)
 
         self.get_logger().info(
-            f"Straight path: Linear={msg.linear.x:.2f}, Angular={msg.angular.z:.2f}, Angle Error={angle_error:.2f}"
+            f"Straight path: Linear={msg.linear.x:.2f}, Distance to Goal={distance_to_goal:.2f}"
         )
 
     def avoid_obstacle(self):
-        """Controls the robot to avoid obstacles."""
+        """Turns the robot to avoid obstacles while pausing linear motion."""
         msg = Twist()
 
         # Determine avoidance direction based on obstacle angle
@@ -105,12 +102,11 @@ class TurtleBot3NavControl(Node):
         else:
             msg.angular.z = 0.5  # Turn left
 
-        # Reduce linear velocity while avoiding
-        msg.linear.x = 0.1
+        msg.linear.x = 0.0  # Stop forward motion while turning
 
         self.velocity_publisher.publish(msg)
 
-        self.get_logger().info("Avoiding obstacle. Adjusting trajectory.")
+        self.get_logger().info("Avoiding obstacle. Adjusting heading.")
 
     def stop_robot(self):
         """Stops the robot gracefully."""
@@ -128,7 +124,7 @@ def main(args=None):
     goal_x = float(input("  Goal X (meters): "))
     goal_y = float(input("  Goal Y (meters): "))
 
-    # Start the corridor navigator node
+    # Start the navigation node
     node = TurtleBot3NavControl(goal_x, goal_y)
     rclpy.spin(node)
 
