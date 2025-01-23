@@ -1,26 +1,16 @@
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
-from sensor_msgs.msg import LaserScan
 import math
 
 class TurtleBot3NavControl(Node):
     def __init__(self):
         super().__init__('turtlebot3_navcontrol')
 
-        # QoS policy for LiDAR subscription
-        lidar_qos = QoSProfile(
-            reliability=ReliabilityPolicy.BEST_EFFORT,
-            history=HistoryPolicy.KEEP_LAST,
-            depth=10
-        )
-
-        # Publishers and Subscribers
+        # Publisher and Subscriber
         self.cmd_vel_publisher = self.create_publisher(Twist, '/cmd_vel', 10)
         self.odom_subscriber = self.create_subscription(Odometry, '/odom', self.odom_callback, 10)
-        self.lidar_subscriber = self.create_subscription(LaserScan, '/scan', self.lidar_callback, qos_profile=lidar_qos)
 
         # Target coordinates (relative to the current position)
         self.target_x = 0.0
@@ -31,10 +21,6 @@ class TurtleBot3NavControl(Node):
         self.current_y = 0.0
         self.current_theta = 0.0
 
-        # LiDAR data
-        self.obstacle_detected = False
-        self.obstacle_direction = None  # Direction of the closest obstacle
-
         # Flags
         self.goal_reached = True
 
@@ -43,7 +29,6 @@ class TurtleBot3NavControl(Node):
         self.angular_speed = 0.5  # Consistent turning speed
         self.angle_tolerance = 0.05  # Tolerance for angle alignment (radians)
         self.distance_tolerance = 0.1  # Tolerance for reaching the goal (meters)
-        self.obstacle_threshold = 0.1  # Distance to consider an obstacle (meters)
 
         self.get_logger().info("TurtleBot3 NavControl Node Initialized")
 
@@ -62,18 +47,6 @@ class TurtleBot3NavControl(Node):
         if not self.goal_reached:
             self.navigate_to_goal()
 
-    def lidar_callback(self, msg):
-        # Check for obstacles within the threshold
-        self.obstacle_detected = False
-        self.obstacle_direction = None
-
-        for i, distance in enumerate(msg.ranges):
-            if 0 < distance < self.obstacle_threshold:  # Ignore invalid or far readings
-                angle = msg.angle_min + i * msg.angle_increment
-                self.obstacle_detected = True
-                self.obstacle_direction = angle  # Save the angle of the closest obstacle
-                break
-
     def navigate_to_goal(self):
         # Calculate the distance and angle to the goal
         dx = self.target_x - self.current_x
@@ -88,28 +61,19 @@ class TurtleBot3NavControl(Node):
             self.get_logger().info("Goal reached!")
             return
 
-        # Control logic for smoother motion and obstacle avoidance
+        # Control logic for smoother motion
         twist = Twist()
 
-        if self.obstacle_detected:
-            self.get_logger().info(f"Obstacle detected at angle {self.obstacle_direction:.2f} radians")
-            # Avoid obstacle by turning away
-            if self.obstacle_direction > 0:  # Obstacle on the right
-                twist.angular.z = self.angular_speed
-            else:  # Obstacle on the left
-                twist.angular.z = -self.angular_speed
-            twist.linear.x = 0.0  # Stop forward motion while avoiding
-        else:
-            # Navigate toward the goal
-            angle_error = angle_to_goal - self.current_theta
-            angle_error = math.atan2(math.sin(angle_error), math.cos(angle_error))  # Normalize angle
+        # Calculate angular error and normalize to [-pi, pi]
+        angle_error = angle_to_goal - self.current_theta
+        angle_error = math.atan2(math.sin(angle_error), math.cos(angle_error))
 
-            if abs(angle_error) > self.angle_tolerance:  # Correct orientation
-                twist.angular.z = self.angular_speed * angle_error
-                twist.linear.x = self.linear_speed * 0.5  # Slow forward motion during turning
-            else:  # Move toward the goal
-                twist.linear.x = self.linear_speed
-                twist.angular.z = 0.0
+        if abs(angle_error) > self.angle_tolerance:  # Correct orientation
+            twist.linear.x = self.linear_speed * 0.5  # Slow forward motion during turning
+            twist.angular.z = self.angular_speed * angle_error
+        else:  # Move toward the goal
+            twist.linear.x = self.linear_speed
+            twist.angular.z = 0.0
 
         # Publish the velocity command
         self.cmd_vel_publisher.publish(twist)
