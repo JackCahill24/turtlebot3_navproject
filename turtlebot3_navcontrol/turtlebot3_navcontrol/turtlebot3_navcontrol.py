@@ -12,17 +12,17 @@ class TurtleBot3NavControl(Node):
         self.cmd_vel_publisher = self.create_publisher(Twist, '/cmd_vel', 10)
         self.odom_subscriber = self.create_subscription(Odometry, '/odom', self.odom_callback, 10)
 
-        # Target coordinates
+        # Target coordinates (relative to the current position)
         self.target_x = 0.0
         self.target_y = 0.0
 
-        # Current coordinates and orientation
+        # Current position and orientation
         self.current_x = 0.0
         self.current_y = 0.0
         self.current_theta = 0.0
 
-        # Navigation flag
-        self.goal_reached = False
+        # Flags
+        self.goal_reached = True
 
         self.get_logger().info("TurtleBot3 NavControl Node Initialized")
 
@@ -37,7 +37,7 @@ class TurtleBot3NavControl(Node):
             orientation_q.x, orientation_q.y, orientation_q.z, orientation_q.w
         )
 
-        # Navigate to the target if not already there
+        # Navigate to the target if a goal is set
         if not self.goal_reached:
             self.navigate_to_goal()
 
@@ -89,18 +89,26 @@ def main(args=None):
     rclpy.init(args=args)
     node = TurtleBot3NavControl()
 
-    # Get target coordinates from the user
-    node.target_x = float(input("Enter target x coordinate: "))
-    node.target_y = float(input("Enter target y coordinate: "))
-    node.get_logger().info(f"Moving to target ({node.target_x}, {node.target_y})...")
+    while rclpy.ok():
+        try:
+            if node.goal_reached:  # Only accept new input after reaching the previous goal
+                # Get target coordinates relative to the current position
+                relative_x = float(input("Enter target x coordinate relative to current position: "))
+                relative_y = float(input("Enter target y coordinate relative to current position: "))
 
-    try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        node.destroy_node()
-        rclpy.shutdown()
+                # Calculate new target position in global coordinates
+                node.target_x = node.current_x + relative_x
+                node.target_y = node.current_y + relative_y
+
+                node.goal_reached = False  # Reset the goal flag
+                node.get_logger().info(f"Moving to target ({node.target_x}, {node.target_y})...")
+
+            rclpy.spin_once(node)  # Allow the node to process callbacks
+        except KeyboardInterrupt:
+            break
+
+    node.destroy_node()
+    rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
