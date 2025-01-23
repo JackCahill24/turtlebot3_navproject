@@ -1,6 +1,6 @@
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
@@ -10,8 +10,12 @@ class TurtleBot3NavControl(Node):
     def __init__(self):
         super().__init__('turtlebot3_navcontrol')
 
-        # QoS for LiDAR subscription
-        lidar_qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, depth=10)
+        # Correctly defined QoS profile for LiDAR subscription
+        lidar_qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10
+        )
 
         # Publishers and Subscribers
         self.cmd_vel_publisher = self.create_publisher(Twist, '/cmd_vel', 10)
@@ -40,9 +44,6 @@ class TurtleBot3NavControl(Node):
         self.get_logger().info("TurtleBot3 NavControl Node Initialized")
 
     def odom_callback(self, msg):
-        """
-        Updates robot's current position and orientation from odometry data.
-        """
         self.current_x = msg.pose.pose.position.x
         self.current_y = msg.pose.pose.position.y
         orientation_q = msg.pose.pose.orientation
@@ -50,14 +51,10 @@ class TurtleBot3NavControl(Node):
             orientation_q.x, orientation_q.y, orientation_q.z, orientation_q.w
         )
 
-        # If the goal is not reached, continue navigating
         if not self.goal_reached:
             self.navigate_to_goal()
 
     def lidar_callback(self, msg):
-        """
-        Checks for obstacles within a defined threshold using LiDAR data.
-        """
         self.obstacle_detected = False
         self.obstacle_direction = None
 
@@ -69,15 +66,11 @@ class TurtleBot3NavControl(Node):
                 break
 
     def navigate_to_goal(self):
-        """
-        Handles navigation to the target while avoiding obstacles.
-        """
         dx = self.target_x - self.current_x
         dy = self.target_y - self.current_y
         distance = math.sqrt(dx**2 + dy**2)
         angle_to_goal = math.atan2(dy, dx)
 
-        # Stop the robot if the goal is reached
         if distance < self.distance_tolerance:
             self.goal_reached = True
             self.cmd_vel_publisher.publish(Twist())
@@ -87,7 +80,6 @@ class TurtleBot3NavControl(Node):
         twist = Twist()
 
         if self.obstacle_detected:
-            # Avoid obstacle
             self.get_logger().info(f"Obstacle detected at angle {self.obstacle_direction:.2f} radians")
             if self.obstacle_direction > 0:
                 twist.angular.z = self.angular_speed
@@ -95,7 +87,6 @@ class TurtleBot3NavControl(Node):
                 twist.angular.z = -self.angular_speed
             twist.linear.x = 0.0
         else:
-            # Normal navigation
             angle_error = angle_to_goal - self.current_theta
             angle_error = math.atan2(math.sin(angle_error), math.cos(angle_error))
 
@@ -106,14 +97,10 @@ class TurtleBot3NavControl(Node):
                 twist.linear.x = self.linear_speed
                 twist.angular.z = 0.0
 
-        # Publish the velocity command
         self.cmd_vel_publisher.publish(twist)
 
     @staticmethod
     def euler_from_quaternion(x, y, z, w):
-        """
-        Converts quaternion to euler angles.
-        """
         t0 = +2.0 * (w * x + y * z)
         t1 = +1.0 - 2.0 * (x * x + y * y)
         roll = math.atan2(t0, t1)
@@ -136,7 +123,6 @@ def main(args=None):
     while rclpy.ok():
         try:
             if node.goal_reached:
-                # Set a new goal relative to the current position
                 relative_x = float(input("Enter target x coordinate relative to current position: "))
                 relative_y = float(input("Enter target y coordinate relative to current position: "))
                 node.target_x = node.current_x + relative_x
