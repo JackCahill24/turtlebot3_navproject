@@ -36,7 +36,7 @@ class TurtleBot3NavControl(Node):
         # Closed-loop control logic
         twist = Twist()
 
-        if front_avg < 0.5:  # Obstacle detected in front
+        if front_avg < 0.075:  # Obstacle detected in front
             # Stop moving forward and adjust direction
             twist.linear.x = 0.0
             if left_avg > right_avg:
