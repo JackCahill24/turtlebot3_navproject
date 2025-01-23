@@ -1,6 +1,6 @@
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
@@ -11,7 +11,11 @@ class TurtleBot3NavControl(Node):
         super().__init__('turtlebot3_navcontrol')
 
         # QoS policy for LiDAR subscription
-        lidar_qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, depth=10)
+        lidar_qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10
+        )
 
         # Publishers and Subscribers
         self.cmd_vel_publisher = self.create_publisher(Twist, '/cmd_vel', 10)
