@@ -1,117 +1,67 @@
-#!/usr/bin/env python3
-
-import math
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy
-from geometry_msgs.msg import Twist
-from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
-
+from geometry_msgs.msg import Twist
 
 class TurtleBot3NavControl(Node):
-    def __init__(self, goal_x, goal_y):
+    def __init__(self):
         super().__init__('turtlebot3_navcontrol')
+        self.lidar_subscriber = self.create_subscription(
+            LaserScan, '/scan', self.lidar_callback, 10)
+        self.cmd_vel_publisher = self.create_publisher(
+            Twist, '/cmd_vel', 10)
 
-        # Goal coordinates
-        self.goal_x = goal_x
-        self.goal_y = goal_y
+        # Controller parameters (adjust as needed)
+        self.linear_velocity = 0.2  # Base forward speed
+        self.angular_gain = 1.0  # Proportional gain for angular velocity
 
-        # State variables
-        self.current_x = 0.0
-        self.current_y = 0.0
-        self.yaw = 0.0
-        self.obstacle_detected = False
+        self.get_logger().info("TurtleBot3 NavControl Node Initialized")
 
-        # Safety and tolerance parameters
-        self.safe_distance = 0.127  # 5 inches in meters
-        self.goal_tolerance = 0.1  # Stop if within 0.1 meters of the goal
+    def lidar_callback(self, msg):
+        """
+        Callback to process LiDAR data and control the robot.
+        """
+        # Split ranges into left, front, and right sectors
+        front_ranges = msg.ranges[len(msg.ranges) // 3: 2 * len(msg.ranges) // 3]
+        left_ranges = msg.ranges[:len(msg.ranges) // 3]
+        right_ranges = msg.ranges[2 * len(msg.ranges) // 3:]
 
-        # ROS 2 publishers and subscribers
-        self.velocity_publisher = self.create_publisher(Twist, '/cmd_vel', 10)
-        self.create_subscription(Odometry, '/odom', self.odom_callback, 10)
-        self.create_subscription(
-            LaserScan,
-            '/scan',
-            self.scan_callback,
-            qos_profile=QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT)
-        )
+        # Compute the average distance for each sector
+        front_avg = min(front_ranges) if front_ranges else float('inf')
+        left_avg = min(left_ranges) if left_ranges else float('inf')
+        right_avg = min(right_ranges) if right_ranges else float('inf')
 
-        # Control loop timer
-        self.control_timer = self.create_timer(0.1, self.control_loop)
+        self.get_logger().info(f"Front: {front_avg}, Left: {left_avg}, Right: {right_avg}")
 
-        self.get_logger().info(f"Navigator started. Goal: x={goal_x:.2f}, y={goal_y:.2f}")
+        # Closed-loop control logic
+        twist = Twist()
 
-    def odom_callback(self, msg):
-        """Updates the robot's position and orientation."""
-        self.current_x = msg.pose.pose.position.x
-        self.current_y = msg.pose.pose.position.y
-
-        orientation_q = msg.pose.pose.orientation
-        siny_cosp = 2.0 * (orientation_q.w * orientation_q.z + orientation_q.x * orientation_q.y)
-        cosy_cosp = 1.0 - 2.0 * (orientation_q.y * orientation_q.y + orientation_q.z * orientation_q.z)
-        self.yaw = math.atan2(siny_cosp, cosy_cosp)
-
-    def scan_callback(self, msg):
-        """Detects obstacles using LiDAR data."""
-        self.obstacle_detected = any(distance < self.safe_distance for distance in msg.ranges)
-
-    def control_loop(self):
-        """Main control loop for navigation."""
-        distance_to_goal = math.sqrt((self.goal_x - self.current_x) ** 2 + (self.goal_y - self.current_y) ** 2)
-
-        if distance_to_goal < self.goal_tolerance:
-            self.stop_robot()
-            self.get_logger().info("Goal reached!")
-            return
-
-        if self.obstacle_detected:
-            self.avoid_obstacle()
+        if front_avg < 0.5:  # Obstacle detected in front
+            # Stop moving forward and adjust direction
+            twist.linear.x = 0.0
+            if left_avg > right_avg:
+                twist.angular.z = self.angular_gain  # Turn left
+            else:
+                twist.angular.z = -self.angular_gain  # Turn right
         else:
-            self.move_toward_goal()
+            # Move forward and adjust orientation proportionally
+            twist.linear.x = self.linear_velocity
+            angular_error = (right_avg - left_avg)  # Difference between left and right distances
+            twist.angular.z = self.angular_gain * angular_error  # Proportional control
 
-    def move_toward_goal(self):
-        """Drives the robot in a straight line toward the goal."""
-        angle_to_goal = math.atan2(self.goal_y - self.current_y, self.goal_x - self.current_x)
-        angle_error = angle_to_goal - self.yaw
-        angle_error = math.atan2(math.sin(angle_error), math.cos(angle_error))  # Normalize to [-pi, pi]
-
-        msg = Twist()
-        msg.linear.x = 0.2  # Move forward
-        msg.angular.z = 0.5 * angle_error  # Adjust heading toward goal
-        self.velocity_publisher.publish(msg)
-
-    def avoid_obstacle(self):
-        """Stops the robot and adjusts its heading to avoid obstacles."""
-        msg = Twist()
-        msg.linear.x = 0.0
-        msg.angular.z = 0.5  # Turn in place to avoid obstacle
-        self.velocity_publisher.publish(msg)
-        self.get_logger().info("Obstacle detected! Turning to avoid.")
-
-    def stop_robot(self):
-        """Stops the robot."""
-        msg = Twist()
-        msg.linear.x = 0.0
-        msg.angular.z = 0.0
-        self.velocity_publisher.publish(msg)
-
+        # Publish the velocity command
+        self.cmd_vel_publisher.publish(twist)
 
 def main(args=None):
     rclpy.init(args=args)
-
-    # Get the goal coordinates from the user
-    print("Enter the target goal location in meters:")
-    goal_x = float(input("  Goal X (meters): "))
-    goal_y = float(input("  Goal Y (meters): "))
-
-    # Start the navigation node
-    node = TurtleBot3NavControl(goal_x, goal_y)
-    rclpy.spin(node)
-
-    node.destroy_node()
-    rclpy.shutdown()
-
+    node = TurtleBot3NavControl()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
