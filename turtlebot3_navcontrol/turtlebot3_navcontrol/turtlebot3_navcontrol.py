@@ -24,6 +24,12 @@ class TurtleBot3NavControl(Node):
         # Flags
         self.goal_reached = True
 
+        # Control parameters
+        self.linear_speed = 0.15  # Consistent forward speed
+        self.angular_speed = 0.5  # Consistent turning speed
+        self.angle_tolerance = 0.05  # Tolerance for angle alignment (radians)
+        self.distance_tolerance = 0.1  # Tolerance for reaching the goal (meters)
+
         self.get_logger().info("TurtleBot3 NavControl Node Initialized")
 
     def odom_callback(self, msg):
@@ -48,22 +54,26 @@ class TurtleBot3NavControl(Node):
         distance = math.sqrt(dx**2 + dy**2)
         angle_to_goal = math.atan2(dy, dx)
 
-        # If close enough to the goal, stop
-        if distance < 0.1:
+        # Check if the goal is reached
+        if distance < self.distance_tolerance:
             self.goal_reached = True
             self.cmd_vel_publisher.publish(Twist())  # Stop the robot
             self.get_logger().info("Goal reached!")
             return
 
-        # Control logic: Rotate towards the goal if needed, otherwise move forward
+        # Control logic for smoother motion
         twist = Twist()
-        angle_error = angle_to_goal - self.current_theta
-        angle_error = math.atan2(math.sin(angle_error), math.cos(angle_error))  # Normalize angle
 
-        if abs(angle_error) > 0.1:  # Rotate if the angle error is significant
-            twist.angular.z = 0.5 * angle_error
-        else:  # Move forward if aligned
-            twist.linear.x = 0.2
+        # Calculate angular error and normalize to [-pi, pi]
+        angle_error = angle_to_goal - self.current_theta
+        angle_error = math.atan2(math.sin(angle_error), math.cos(angle_error))
+
+        if abs(angle_error) > self.angle_tolerance:  # Correct orientation
+            twist.linear.x = self.linear_speed * 0.5  # Slow forward motion during turning
+            twist.angular.z = self.angular_speed * angle_error
+        else:  # Move toward the goal
+            twist.linear.x = self.linear_speed
+            twist.angular.z = 0.0
 
         # Publish the velocity command
         self.cmd_vel_publisher.publish(twist)
