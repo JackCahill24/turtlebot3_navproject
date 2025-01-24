@@ -4,7 +4,6 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
-from tf_transformations import euler_from_quaternion
 import math
 
 class TurtleBot3NavController(Node):
@@ -24,9 +23,10 @@ class TurtleBot3NavController(Node):
         self.current_pose['x'] = msg.pose.pose.position.x
         self.current_pose['y'] = msg.pose.pose.position.y
         orientation_q = msg.pose.pose.orientation
-        _, _, self.current_pose['theta'] = euler_from_quaternion([
-            orientation_q.x, orientation_q.y, orientation_q.z, orientation_q.w
-        ])
+        # Manually calculate yaw from quaternion
+        siny_cosp = 2 * (orientation_q.w * orientation_q.z + orientation_q.x * orientation_q.y)
+        cosy_cosp = 1 - 2 * (orientation_q.y * orientation_q.y + orientation_q.z * orientation_q.z)
+        self.current_pose['theta'] = math.atan2(siny_cosp, cosy_cosp)
 
     def run_navigation(self):
         """Main function to handle navigation."""
