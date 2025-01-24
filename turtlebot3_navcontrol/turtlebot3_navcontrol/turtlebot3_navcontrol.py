@@ -1,103 +1,100 @@
+#!/usr/bin/env python3
+
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
-from sensor_msgs.msg import LaserScan
+from tf_transformations import euler_from_quaternion
 import math
-import numpy as np
 
-class TurtleBot3NavControl(Node):
+class TurtleBot3NavController(Node):
     def __init__(self):
         super().__init__('turtlebot3_navcontrol')
+        self.publisher_ = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.subscription = self.create_subscription(Odometry, '/odom', self.odom_callback, 10)
+        
+        self.current_pose = {'x': 0.0, 'y': 0.0, 'theta': 0.0}
+        self.target_pose = {'x': 0.0, 'y': 0.0}
+        
+        self.get_logger().info('Navigation Controller Node Initialized')
+        self.run_navigation()
 
-        # Parameters
-        self.goal_tolerance = 0.05  # Goal proximity tolerance (meters)
-        self.safe_distance = 0.3  # Minimum safe distance from obstacles (meters)
-        self.k_v = 0.5  # Linear velocity gain
-        self.k_omega = 1.0  # Angular velocity gain
-        self.max_linear_vel = 0.22  # TurtleBot3 max linear velocity
-        self.max_angular_vel = 2.84  # TurtleBot3 max angular velocity
+    def odom_callback(self, msg):
+        """Callback function to update the robot's current position and orientation."""
+        self.current_pose['x'] = msg.pose.pose.position.x
+        self.current_pose['y'] = msg.pose.pose.position.y
+        orientation_q = msg.pose.pose.orientation
+        _, _, self.current_pose['theta'] = euler_from_quaternion([
+            orientation_q.x, orientation_q.y, orientation_q.z, orientation_q.w
+        ])
 
-        # Robot state
-        self.current_pos = [0.0, 0.0, 0.0]  # [x, y, theta]
-        self.goal_pos = [2.0, 2.0]  # Example default goal
-        self.lidar_data = []
+    def run_navigation(self):
+        """Main function to handle navigation."""
+        while True:
+            self.get_logger().info('Starting new navigation cycle...')
+            try:
+                self.get_target_coordinates()
+                self.navigate_to_target()
+            except KeyboardInterrupt:
+                self.get_logger().info('Navigation interrupted. Exiting.')
+                break
 
-        # Publishers and Subscribers
-        self.vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
-        self.odom_sub = self.create_subscription(Odometry, '/odom', self.update_odometry, 10)
-        self.lidar_sub = self.create_subscription(LaserScan, '/scan', self.update_lidar, 10)
+    def get_target_coordinates(self):
+        """Prompt the user to input target coordinates."""
+        self.target_pose['x'] = float(input("Enter the target x-coordinate (meters): "))
+        self.target_pose['y'] = float(input("Enter the target y-coordinate (meters): "))
+        self.get_logger().info(f"Target coordinates set to x: {self.target_pose['x']}, y: {self.target_pose['y']}")
 
-        # Timer for control loop
-        self.timer = self.create_timer(0.1, self.control_loop)  # 10 Hz
+    def navigate_to_target(self):
+        """Navigate the robot to the target coordinates."""
+        rate = self.create_rate(10)  # 10 Hz
+        while rclpy.ok():
+            # Calculate the distance and angle to the target
+            dx = self.target_pose['x'] - self.current_pose['x']
+            dy = self.target_pose['y'] - self.current_pose['y']
+            distance = math.sqrt(dx**2 + dy**2)
+            target_angle = math.atan2(dy, dx)
+            angle_diff = target_angle - self.current_pose['theta']
 
-    def update_odometry(self, msg):
-        # Extract position and orientation
-        self.current_pos[0] = msg.pose.pose.position.x
-        self.current_pos[1] = msg.pose.pose.position.y
+            # Normalize angle difference
+            angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))
 
-        # Convert quaternion to yaw
-        orientation = msg.pose.pose.orientation
-        _, _, yaw = self.quaternion_to_euler(orientation.x, orientation.y, orientation.z, orientation.w)
-        self.current_pos[2] = yaw
+            # Stop when close enough to the target
+            if distance < 0.1:
+                self.stop_robot()
+                self.get_logger().info('Reached target location.')
+                break
 
-    def update_lidar(self, msg):
-        # Store LiDAR ranges
-        self.lidar_data = np.array(msg.ranges)
+            # Rotate towards the target if angle difference is significant
+            if abs(angle_diff) > 0.1:
+                twist_msg = Twist()
+                twist_msg.angular.z = 0.5 * angle_diff
+                self.publisher_.publish(twist_msg)
+            else:
+                # Move forward towards the target
+                twist_msg = Twist()
+                twist_msg.linear.x = 0.2 * distance
+                twist_msg.angular.z = 0.5 * angle_diff
+                self.publisher_.publish(twist_msg)
 
-    def quaternion_to_euler(self, x, y, z, w):
-        t3 = 2.0 * (w * z + x * y)
-        t4 = 1.0 - 2.0 * (y * y + z * z)
-        yaw = math.atan2(t3, t4)
-        return 0.0, 0.0, yaw
-
-    def control_loop(self):
-        if len(self.lidar_data) == 0:
-            return  # Wait until LiDAR data is available
-
-        # Compute goal-related errors
-        x, y, theta = self.current_pos
-        x_goal, y_goal = self.goal_pos
-        error_theta = math.atan2(y_goal - y, x_goal - x) - theta
-        error_theta = (error_theta + math.pi) % (2 * math.pi) - math.pi  # Normalize
-        error_distance = math.sqrt((x_goal - x)**2 + (y_goal - y)**2)
-
-        # Check if goal is reached
-        if error_distance < self.goal_tolerance:
-            self.stop_robot()
-            self.get_logger().info('Goal reached!')
-            return
-
-        # Compute velocities
-        linear_vel = min(self.k_v * error_distance, self.max_linear_vel)
-        angular_vel = np.clip(self.k_omega * error_theta, -self.max_angular_vel, self.max_angular_vel)
-
-        # Obstacle avoidance
-        min_distance = np.min(self.lidar_data)
-        if min_distance < self.safe_distance:
-            # Adjust angular velocity to avoid obstacles
-            obstacle_angle = np.argmin(self.lidar_data)  # Angle of the closest obstacle
-            angular_vel += self.k_omega * (self.safe_distance - min_distance)
-
-        # Publish velocity command
-        twist = Twist()
-        twist.linear.x = linear_vel
-        twist.angular.z = angular_vel
-        self.vel_pub.publish(twist)
+            rate.sleep()
 
     def stop_robot(self):
-        # Publish zero velocities to stop the robot
-        twist = Twist()
-        twist.linear.x = 0.0
-        twist.angular.z = 0.0
-        self.vel_pub.publish(twist)
+        """Stop the robot."""
+        twist_msg = Twist()
+        twist_msg.linear.x = 0.0
+        twist_msg.angular.z = 0.0
+        self.publisher_.publish(twist_msg)
 
 def main(args=None):
     rclpy.init(args=args)
-    node = TurtleBot3NavControl()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+    try:
+        node = TurtleBot3NavController()
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        node.get_logger().info('Node stopped by user.')
+    finally:
+        rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
