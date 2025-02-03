@@ -47,17 +47,30 @@ class FeedbackController(Node):
         current_y = self.y
         current_phi = self.phi
 
-        # Compute relative position error (xr, yr) in the robot's local frame
-        xr = (self.goal_x - current_x) * math.cos(current_phi) + (self.goal_y - current_y) * math.sin(current_phi)
-        yr = -(self.goal_x - current_x) * math.sin(current_phi) + (self.goal_y - current_y) * math.cos(current_phi)
+        # Compute reference point
+        l = 0.1 # Dependent on robot dimensions (0.5 to 1.5 times robot radius)
+        xr = l * math.cos(current_phi)
+        yr = l * math.sin(current_phi)
+
+        # Actual coordinates of reference point and its desired position in the global frame
+        xpd = self.goal_x + l * math.cos(self.goal_phi)
+        ypd = self.goal_y + l * math.sin(self.goal_phi)
+        xp = current_x - xr
+        yp = current_y - yr
 
         # Compute desired velocity using feedback control
-        xdot_p = self.kp * (self.goal_x - current_x)
-        ydot_p = self.kp * (self.goal_y - current_y)
+        xdot_p = self.kp * (xpd - xp)
+        ydot_p = self.kp * (ypd - yp)
+
+        # Matrix algebra to compute control inputs
+        A = xr * math.cos(current_phi) - yr * math.sin(current_phi)
+        B = xr * math.sin(current_phi) + yr * math.cos(current_phi)
+        C = -math.sin(current_phi)
+        D = math.cos(current_phi)
 
         # Compute control inputs (v and w)
-        v = (1 / max(abs(xr), 0.001)) * ((xr * xdot_p) + (yr * ydot_p))
-        w = (1 / max(abs(xr), 0.001)) * ((-math.sin(current_phi) * xdot_p) + (math.cos(current_phi) * ydot_p))
+        v = (1 / max(abs(xr), 0.001)) * ((A * xdot_p) + (B * ydot_p))
+        w = (1 / max(abs(xr), 0.001)) * ((C * xdot_p) + (D * ydot_p))
 
         # Stop if close to goal
         if abs(self.goal_x - current_x) < 0.05 and abs(self.goal_y - current_y) < 0.05:
