@@ -13,7 +13,7 @@ class FeedbackController(Node):
         self.odom_sub = self.create_subscription(Odometry, 'odom', self.odom_callback, 10)
 
         # Define Goal State (Modify as needed)
-        self.goal_x = 3.0  # Target X position
+        self.goal_x = 2.0  # Target X position
         self.goal_y = 2.0  # Target Y position
         self.goal_phi = 0.0  # Desired final orientation
 
