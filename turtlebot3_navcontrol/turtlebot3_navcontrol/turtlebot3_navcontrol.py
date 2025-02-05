@@ -13,14 +13,14 @@ class FeedbackController(Node):
         self.odom_sub = self.create_subscription(Odometry, 'odom', self.odom_callback, 10)
 
         # Define Goal State (Modify as needed)
-        self.goal_x = 2.0  # Target X position
+        self.goal_x = 3.0  # Target X position
         self.goal_y = 2.0  # Target Y position
         self.goal_phi = 0.0  # Desired final orientation
 
         # Define Control Gains (Modify as needed)
-        self.kp = 0.1  # Proportional gain for linear velocity
+        self.kp = 0.15  # Proportional gain for linear velocity
 
-        # Robot State (Updated from Odometry)
+        # Robot State (Updated from Odometry, initialized at origin)
         self.x = 0.0
         self.y = 0.0
         self.phi = 0.0  # Orientation (yaw)
@@ -53,10 +53,10 @@ class FeedbackController(Node):
         yr = l * math.sin(current_phi)
 
         # Actual coordinates of reference point and its desired position in the global frame
-        xpd = self.goal_x + l * math.cos(self.goal_phi)
-        ypd = self.goal_y + l * math.sin(self.goal_phi)
         xp = current_x - xr
         yp = current_y - yr
+        xpd = self.goal_x + l * math.cos(self.goal_phi)
+        ypd = self.goal_y + l * math.sin(self.goal_phi)
 
         # Compute desired velocity using feedback control
         xdot_p = self.kp * (xpd - xp)
