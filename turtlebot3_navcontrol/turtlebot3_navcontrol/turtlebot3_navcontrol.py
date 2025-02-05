@@ -18,7 +18,7 @@ class FeedbackController(Node):
         self.goal_phi = 0.0  # Desired final orientation
 
         # Define Control Gains (Modify as needed)
-        self.kp = 0.15  # Proportional gain for linear velocity
+        self.kp = 0.1  # Proportional gain for linear velocity
 
         # Robot State (Updated from Odometry, initialized at origin)
         self.x = 0.0
